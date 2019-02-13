@@ -2,9 +2,12 @@
 
 ## Destabilizing buoyancy flux
 
-Two initial conditions for a constant, destabilizing buoyancy flux:
+Setups:
 
-1. Initial linear stratification
-2. Initial mixed layer + linear stratification below
-3. Daily cycle with no internal heating
-4. Daily cycle with internal heating
+1. With a constant, destabilizing buoyancy flux:
+- Initial linear stratification
+- Initial mixed layer + linear stratification below
+
+2. With a daily cycle of destabilizing buoyancy flux:
+- With no internal heating during the day (convection shutoff)
+- With internal heating during the day (shallow restratification)
