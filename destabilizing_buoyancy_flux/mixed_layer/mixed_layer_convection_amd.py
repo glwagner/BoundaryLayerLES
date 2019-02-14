@@ -11,35 +11,16 @@ import dedaLES
 
 logger = logging.getLogger(__name__)
 
-# Some convenient constants
-second = 1.0
-minute = 60*second
-hour   = 60*minute
-day    = 24*hour
-
 if len(sys.argv) > 1:
     debug = True
 else:
     debug = False
 
-
-def float_2_nice_str(a):
-    before = "{:.0f}".format(a)
-    after = "{:.15f}".format(a-np.floor(a))
-    return "{}p{}".format(before, after[2:-1].rstrip('0'))
-
-
-def identifier(model, closure=None): 
-    if closure is None: closure_name = 'DNS'
-    else:               closure_name = closure.__class__.__name__
-    return "freeconvection_nx{:d}_ny{:d}_nz{:d}_F{}_Ninv{:.0f}_{:s}".format(
-            model.nx, model.ny, model.nz, float_2_nice_str(-model.surface_flux), 1/np.sqrt(initial_N2), closure_name)
-
-# Main parameters
-nx = ny = nz = 128      # x,y,z resolution 
-Lx = Ly = Lz = 1.0      # x,y,z extent [m]
-initial_N    = 1/500.0  # Initial buoyancy frequency [s⁻¹]
-surface_flux = -1e-10   # Buoyancy flux into ocean [m² s⁻³]
+# Some convenient constants
+second = 1.0
+minute = 60*second
+hour   = 60*minute
+day    = 24*hour
 
 # Physical constants
 κ  = 1.43e-7  # Thermal diffusivity [m² s⁻¹]
@@ -50,22 +31,49 @@ g  = 9.81     # Graviational acceleration [m s⁻²]
 ρ0 = 1028.1   # Reference density [kg m⁻³]
 cP = 3993.0   # Specific heat of oceanic water [J kg⁻¹ K⁻¹]
 
+def heat_flux(buoyancy_flux):
+    return ρ0*cP/(α*g) * buoyancy_flux
+
+def buoyancy_flux(heat_flux):
+    return α*g/(ρ0*cP) * heat_flux
+
+def float_2_nice_str(a):
+    before = "{:.0f}".format(a)
+    after = "{:.15f}".format(a-np.floor(a))
+    return "{}p{}".format(before, after[2:-1].rstrip('0'))
+
+def identifier(model, closure=None): 
+    if closure is None: closure_name = 'DNS'
+    else:               closure_name = closure.__class__.__name__
+    return "freeconvection_nx{:d}_ny{:d}_nz{:d}_F{}_Ninv{:.0f}_{:s}".format(
+            model.nx, model.ny, model.nz, float_2_nice_str(-model.surface_buoyancy_flux), 1/np.sqrt(initial_N2), closure_name)
+
+# Main parameters
+nx = ny = nz = 128   # x,y resolution 
+Lx = Ly = Lz = 64.0  # x,y,z extent [m]
+
+surface_buoyancy_flux = -1e-9  # Buoyancy flux into ocean [m² s⁻³]
+initial_N = 1/500.0    # Initial buoyancy frequency [s⁻¹]
+initial_h = 10.0       # Initial mixed layer depth [m]
+
 # Physical parameters
-initial_N2 = initial_N**2 # Initial buoyancy gradient [s⁻²]
-surface_bz = surface_flux/κ # [s⁻²]
-initial_dt = 1e-2 / np.sqrt(-surface_bz)
-w_turb     = (-Lz*surface_flux)**(1/3)         # Domain turbulent velocity scale [m s⁻¹]
-noise_amp  = 0.01*w_turb                       # Noise amplitude [m s⁻¹]
-l_kolmo    = (-ν**3/surface_flux)**(1/4)      # Kolmogorov length scale
-t_erosion  = -initial_N2*Lz**2/surface_flux    # Time-scale for stratification erosion
-Q = surface_flux*ρ0*cP/(α*g) # [W m⁻²]
+turb_vel_scale          = (-Lz*surface_buoyancy_flux)**(1/3)        # Domain turbulent velocity scale [m s⁻¹]
+noise_amplitude         = 0.01*turb_vel_scale                       # Noise amplitude [m s⁻¹]
+
+surface_bz              = surface_buoyancy_flux/κ                   # [s⁻²]
+initial_dt              = 1e-2 / np.sqrt(-surface_bz)
+
+surface_heat_flux       = surface_buoyancy_flux*ρ0*cP/(α*g)         # [W m⁻²]
+kolmogorov_length_scale = (-ν**3/surface_buoyancy_flux)**(1/4)      # Kolmogorov length scale
+initial_N2              = initial_N**2                              # Initial buoyancy gradient [s⁻²]
+erosion_time_scale      = -initial_N2*Lz**2/surface_buoyancy_flux   # Time-scale for stratification erosion
 
 # Numerical parameters
-CFL_cadence = 10
-stats_cadence = 100
+CFL_cadence      = 10
+stats_cadence    = 100
 analysis_cadence = 100
-run_time = 2*hour
-max_writes = 1000
+run_time         = 2*hour
+max_writes       = 1000
 
 if debug:
     nx = ny = nz = 8
@@ -75,9 +83,9 @@ if debug:
     stats_cadence = analysis_cadence = 1
 
 # Construct model
-closure = None
+closure = AnisotropicMinimumDissipaiton(stratified=True)
 model = dedaLES.BoussinesqChannelFlow(Lx=Lx, Ly=Ly, Lz=Lz, nx=nx, ny=ny, nz=nz, ν=ν, κ=κ, closure=closure,
-                                      surface_flux=surface_flux, surface_bz=surface_bz, initial_N2=initial_N2)
+                                      surface_buoyancy_flux=surface_buoyancy_flux, surface_bz=surface_bz, initial_N2=initial_N2)
 
 Δx = Lx/nx
 Δy = Ly/ny
@@ -110,9 +118,9 @@ logger.info("""\n
                     y-spacing : {:.2e} m
            z-spacing min, max : {:.2e} m, {:.2e} m
 
-    """.format(Q, surface_flux, 1/initial_N, initial_dt, run_time, 
+    """.format(Q, surface_buoyancy_flux, 1/initial_N, initial_dt, run_time, 
                Lx, Ly, Lz, nx, ny, nz,
-               w_turb, t_erosion, l_kolmo, Δx, Δy, Δz_min, Δz_max)
+               turb_vel_scale, erosion_time_scale, kolmogorov_length_scale, Δx, Δy, Δz_min, Δz_max)
 )
 
 # Boundary conditions
@@ -123,7 +131,7 @@ model.set_tracer_gradient_bc("b", "bottom", gradient="initial_N2")
 model.build_solver(timestepper='RK222')
 
 # Initial condition
-noise = noise_amp * dedaLES.random_noise(model.domain) * model.z * (Lz - model.z) / Lz**2
+noise = noise_amplitude * dedaLES.random_noise(model.domain) * model.z * (Lz - model.z) / Lz**2
 initial_b = initial_N2*model.z
 model.set_fields(
     u = noise,
