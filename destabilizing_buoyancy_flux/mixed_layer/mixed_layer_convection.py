@@ -59,7 +59,7 @@ def float_2_nice_str(a):
 def identifier(model, closure=None): 
     if closure is None: closure_name = 'DNS'
     else:               closure_name = closure.__class__.__name__
-    return "mixed_layer_nx{:d}_ny{:d}_nz{:d}_F{}_Ninv{:.0f}_{:s}".format(
+    return "nx{:d}_ny{:d}_nz{:d}_F{}_Ninv{:.0f}_{:s}".format(
             model.nx, model.ny, model.nz, float_2_nice_str(-model.surface_buoyancy_flux), 1/np.sqrt(initial_N2), closure_name)
 
 # Main parameters
@@ -167,7 +167,7 @@ stats.add_property("χ + χ_sgs", name="chi")
 stats.add_property("w*w", name="w_sq")
 stats.add_property("sqrt(u*u + v*v + w*w) / ν", name='Re')
 
-analysis = model.solver.evaluator.add_file_handler("analysis_{}".format(identifier(model, closure=closure)), 
+analysis = model.solver.evaluator.add_file_handler("mixed_layer_analysis_{}".format(identifier(model, closure=closure)), 
                                                    iter=analysis_cadence, max_writes=max_writes)
 analysis.add_system(model.solver.state, layout='g')
 analysis.add_task("interp(b, y=0)", scales=1, name='b midplane')
@@ -175,7 +175,7 @@ analysis.add_task("interp(u, y=0)", scales=1, name='u midplane')
 analysis.add_task("interp(v, y=0)", scales=1, name='v midplane')
 analysis.add_task("interp(w, y=0)", scales=1, name='w midplane')
 
-averages = model.solver.evaluator.add_file_handler("averages_{}".format(identifier(model, closure=closure)), 
+averages = model.solver.evaluator.add_file_handler("mixed_layer_averages_{}".format(identifier(model, closure=closure)), 
                                                    iter=averages_cadence, max_writes=max_writes)
 averages.add_task("integ(integ(u, 'x'), 'y')", scales=1, name='avg u')
 averages.add_task("integ(integ(v, 'x'), 'y')", scales=1, name='avg v')
@@ -196,10 +196,10 @@ try:
             log_time = time.time()
 
             logger.info("""i: {:d}, t: {:.3f} hr, twall: {:.1f} s, dt: {:.2f} s, max Re {:.0f} 
-                           {:20s}   max sqrt(w^2): {:.2e}, max ε: {:.2e}, <ε>: {:.2e}, <wb>: {:.2e}, <χ>: {:.2e}""".format( 
-                            model.solver.iteration, model.solver.sim_time/hour, compute_time, dt, stats.max("Re"), " ", 
-                            np.sqrt(stats.max("w_sq")), stats.max("epsilon"), stats.volume_average("epsilon"),
-                            stats.volume_average("wb"), stats.volume_average("chi")
+    max sqrt(w^2): {:.2e}, max ε: {:.2e}, <ε>: {:.2e}, <wb>: {:.2e}, <χ>: {:.2e}""".format( 
+        model.solver.iteration, model.solver.sim_time/hour, compute_time, dt, stats.max("Re"),
+        np.sqrt(stats.max("w_sq")), stats.max("epsilon"), stats.volume_average("epsilon"),
+        stats.volume_average("wb"), stats.volume_average("chi")
             ))
 
 except:
