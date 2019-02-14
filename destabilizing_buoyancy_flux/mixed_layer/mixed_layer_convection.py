@@ -9,12 +9,26 @@ from dedalus.extras import flow_tools
 
 import dedaLES
 
+logging.basicConfig(datefmt="%I:%M:%S")
 logger = logging.getLogger(__name__)
 
-if len(sys.argv) > 1:
-    debug = True
+# Setup
+debug = False
+
+if len(sys.argv) is 1:
+    closure = None
+    closure_name = 'DNS'
 else:
-    debug = False
+    closure_name = sys.argv[1]
+    try:
+        if closure_name is 'DNS':
+            closure = None
+        else:
+            closure = getattr(dedaLES, sys.argv[1])()
+    except:
+        logger.info("Closure '{}' not found! Running in debug mode.".format(closure_name))
+        closure = None
+        debug = True
 
 # Some convenient constants
 second = 1.0
@@ -45,7 +59,7 @@ def float_2_nice_str(a):
 def identifier(model, closure=None): 
     if closure is None: closure_name = 'DNS'
     else:               closure_name = closure.__class__.__name__
-    return "freeconvection_nx{:d}_ny{:d}_nz{:d}_F{}_Ninv{:.0f}_{:s}".format(
+    return "mixed_layer_nx{:d}_ny{:d}_nz{:d}_F{}_Ninv{:.0f}_{:s}".format(
             model.nx, model.ny, model.nz, float_2_nice_str(-model.surface_buoyancy_flux), 1/np.sqrt(initial_N2), closure_name)
 
 # Main parameters
@@ -71,6 +85,7 @@ erosion_time_scale      = -initial_N2*Lz**2/surface_buoyancy_flux   # Time-scale
 # Numerical parameters
 CFL_cadence      = 10
 stats_cadence    = 100
+averages_cadence = 10
 analysis_cadence = 100
 run_time         = 2*hour
 max_writes       = 1000
@@ -80,10 +95,9 @@ if debug:
     CFL_cadence = np.inf
     initial_dt = 1e-16
     run_time = 10*initial_dt
-    stats_cadence = analysis_cadence = 1
+    stats_cadence = analysis_cadence = averages_cadence = 1
 
 # Construct model
-closure = AnisotropicMinimumDissipaiton(stratified=True)
 model = dedaLES.BoussinesqChannelFlow(Lx=Lx, Ly=Ly, Lz=Lz, nx=nx, ny=ny, nz=nz, ν=ν, κ=κ, closure=closure,
                                       surface_buoyancy_flux=surface_buoyancy_flux, surface_bz=surface_bz, initial_N2=initial_N2)
 
@@ -97,7 +111,7 @@ logger.info("""\n
                        Simulation info
                        ---------------
 
-                            Q : {:.2e} m C s⁻¹
+            surface heat_flux : {:.2e} W m⁻²
         surface buoyancy flux : {:.2e} m² s⁻³
                           1/N : {:.2e} s
                    initial dt : {:.2e} s
@@ -118,7 +132,7 @@ logger.info("""\n
                     y-spacing : {:.2e} m
            z-spacing min, max : {:.2e} m, {:.2e} m
 
-    """.format(Q, surface_buoyancy_flux, 1/initial_N, initial_dt, run_time, 
+    """.format(surface_heat_flux, surface_buoyancy_flux, 1/initial_N, initial_dt, run_time, 
                Lx, Ly, Lz, nx, ny, nz,
                turb_vel_scale, erosion_time_scale, kolmogorov_length_scale, Δx, Δy, Δz_min, Δz_max)
 )
@@ -128,7 +142,7 @@ model.set_bc("no penetration", "top", "bottom")
 model.set_bc("free slip", "top", "bottom")
 model.set_tracer_gradient_bc("b", "top", gradient="surface_bz") #*tanh(t/tb)")
 model.set_tracer_gradient_bc("b", "bottom", gradient="initial_N2")
-model.build_solver(timestepper='RK222')
+model.build_solver(timestepper='SBDF3')
 
 # Initial condition
 noise = noise_amplitude * dedaLES.random_noise(model.domain) * model.z * (Lz - model.z) / Lz**2
@@ -147,18 +161,26 @@ CFL.add_velocities(('u', 'v', 'w'))
 
 stats = flow_tools.GlobalFlowProperty(model.solver, cadence=stats_cadence)
 
-stats.add_property("w*b", name="buoyancyflux")
+stats.add_property("w*b", name="wb")
 stats.add_property("ε + ε_sgs", name="epsilon")
 stats.add_property("χ + χ_sgs", name="chi")
-stats.add_property("w*w", name="wsquared")
+stats.add_property("w*w", name="w_sq")
 stats.add_property("sqrt(u*u + v*v + w*w) / ν", name='Re')
 
-analysis = model.solver.evaluator.add_file_handler(identifier(model, closure=closure), iter=analysis_cadence, max_writes=max_writes)
+analysis = model.solver.evaluator.add_file_handler("analysis_{}".format(identifier(model, closure=closure)), 
+                                                   iter=analysis_cadence, max_writes=max_writes)
 analysis.add_system(model.solver.state, layout='g')
 analysis.add_task("interp(b, y=0)", scales=1, name='b midplane')
 analysis.add_task("interp(u, y=0)", scales=1, name='u midplane')
 analysis.add_task("interp(v, y=0)", scales=1, name='v midplane')
 analysis.add_task("interp(w, y=0)", scales=1, name='w midplane')
+
+averages = model.solver.evaluator.add_file_handler("averages_{}".format(identifier(model, closure=closure)), 
+                                                   iter=averages_cadence, max_writes=max_writes)
+averages.add_task("integ(integ(u, 'x'), 'y')", scales=1, name='avg u')
+averages.add_task("integ(integ(v, 'x'), 'y')", scales=1, name='avg v')
+averages.add_task("integ(integ(w, 'x'), 'y')", scales=1, name='avg w')
+averages.add_task("integ(integ(b, 'x'), 'y')", scales=1, name='avg b')
 
 # Main loop
 try:
@@ -173,10 +195,11 @@ try:
             compute_time = time.time() - log_time
             log_time = time.time()
 
-            logger.info(
-                "i: {:d}, t: {:.3f} hr, twall: {:.1f} s, dt: {:.2f} s, max Re {:.0f}, max sqrt(w^2): {:e}".format(
-                        model.solver.iteration, model.solver.sim_time/hour, compute_time, dt, 
-                        stats.max("Re"), np.sqrt(stats.max("wsquared"))
+            logger.info("""i: {:d}, t: {:.3f} hr, twall: {:.1f} s, dt: {:.2f} s, max Re {:.0f} 
+                           {:20s}   max sqrt(w^2): {:.2e}, max ε: {:.2e}, <ε>: {:.2e}, <wb>: {:.2e}, <χ>: {:.2e}""".format( 
+                            model.solver.iteration, model.solver.sim_time/hour, compute_time, dt, stats.max("Re"), " ", 
+                            np.sqrt(stats.max("w_sq")), stats.max("epsilon"), stats.volume_average("epsilon"),
+                            stats.volume_average("wb"), stats.volume_average("chi")
             ))
 
 except:
