@@ -56,7 +56,7 @@ surface_bz = surface_flux/κ # [s⁻²]
 initial_dt = 1e-2 / np.sqrt(-surface_bz)
 w_turb     = (-Lz*surface_flux)**(1/3)         # Domain turbulent velocity scale [m s⁻¹]
 noise_amp  = 0.01*w_turb                       # Noise amplitude [m s⁻¹]
-l_kolmo    = (-ν**3/surface_flux)**(1/4)      # Kolmogorov length scale
+l_kolmo    = (-ν**3/surface_flux)**(1/4)       # Kolmogorov length scale
 t_erosion  = -initial_N2*Lz**2/surface_flux    # Time-scale for stratification erosion
 Q = surface_flux*ρ0*cP/(α*g) # [W m⁻²]
 
@@ -120,7 +120,7 @@ model.set_bc("no penetration", "top", "bottom")
 model.set_bc("free slip", "top", "bottom")
 model.set_tracer_gradient_bc("b", "top", gradient="surface_bz") #*tanh(t/tb)")
 model.set_tracer_gradient_bc("b", "bottom", gradient="initial_N2")
-model.build_solver(timestepper='RK222')
+model.build_solver(timestepper='SBDF3')
 
 # Initial condition
 noise = noise_amp * dedaLES.random_noise(model.domain) * model.z * (Lz - model.z) / Lz**2
@@ -147,10 +147,27 @@ stats.add_property("sqrt(u*u + v*v + w*w) / ν", name='Re')
 
 analysis = model.solver.evaluator.add_file_handler(identifier(model, closure=closure), iter=analysis_cadence, max_writes=max_writes)
 analysis.add_system(model.solver.state, layout='g')
+#visualization
 analysis.add_task("interp(b, y=0)", scales=1, name='b midplane')
 analysis.add_task("interp(u, y=0)", scales=1, name='u midplane')
 analysis.add_task("interp(v, y=0)", scales=1, name='v midplane')
 analysis.add_task("interp(w, y=0)", scales=1, name='w midplane')
+#quantities that go into a first order closure
+
+#average quantities
+analysis.add_task("integ(integ(b, 'y'), 'x')", layout='g', name='<b>')
+analysis.add_task("integ(integ(u, 'y'), 'x')", layout='g', name='<u>')
+analysis.add_task("integ(integ(v, 'y'), 'x')", layout='g', name='<v>')
+#derivative of average quantities
+analysis.add_task("integ(integ(bz, 'y'), 'x')", layout='g', name='<bz>')
+analysis.add_task("integ(integ(uz, 'y'), 'x')", layout='g', name='<uz>')
+analysis.add_task("integ(integ(vz, 'y'), 'x')", layout='g', name='<vz>')
+#covariance terms (recall that the average of b*w is zero)
+analysis.add_task("integ(integ(b*w, 'y'), 'x')", layout='g', name='<bw>')
+analysis.add_task("integ(integ(u*w, 'y'), 'x')", layout='g', name='<uw>')
+analysis.add_task("integ(integ(v*w, 'y'), 'x')", layout='g', name='<vw>')
+
+
 
 # Main loop
 try:
