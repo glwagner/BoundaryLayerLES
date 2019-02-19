@@ -2,11 +2,14 @@
 
 nodes=$1
 jobname="ML$nodes"
-closure="StratifiedAnisotropicMinimumDissipation"
 runscript="mixed_layer_convection.py"
 scriptname="$jobname.pbs"
-walltime="02:00:00"
+walltime="04:00:00"
 TMPDIR=/glade/scratch/$USER/temp
+
+# Submit AMD
+closure="ConstantSmagorinsky"
+outputname=$jobname.$closure.out
 
 rm -f $scriptname
 
@@ -46,7 +49,8 @@ cp $runscript $TMPDIR/
 cd $TMPDIR
 
 ### Run the executable
-mpiexec python3 $runscript >> $PWD/$jobname.out" >> $scriptname
+mpiexec python3 $runscript >> $PWD/$outputname" >> $scriptname
 
+echo "Output in $outputname"
 qsub $scriptname
 qstat

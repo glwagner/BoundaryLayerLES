@@ -15,16 +15,25 @@ logger = logging.getLogger(__name__)
 # Setup
 debug = False
 
+ν_split = 0.0 #1e-1
+κ_split = 0.0 #1e-1
+
 if len(sys.argv) is 1:
     closure = None
     closure_name = 'DNS'
 else:
-    closure_name = sys.argv[1]
+    if len(sys.argv) is 2:
+        closure_name = sys.argv[1]
+    else:
+        closure_name = sys.argv[2]
+        debug = True
     try:
         if closure_name is 'DNS':
             closure = None
+        #elif closure_name is 'ConstantSmagorinsky':
+        #    closure = getattr(dedaLES, closure_name)(ν_split=ν_split)
         else:
-            closure = getattr(dedaLES, sys.argv[1])()
+            closure = getattr(dedaLES, closure_name)() #ν_split=ν_split, κ_split=κ_split)
     except:
         logger.info("Closure '{}' not found! Running in debug mode.".format(closure_name))
         closure = None
@@ -63,16 +72,16 @@ def identifier(model, closure=None):
             model.nx, model.ny, model.nz, float_2_nice_str(-model.surface_buoyancy_flux), 1/np.sqrt(initial_N2), closure_name)
 
 # Main parameters
-nx = ny = nz = 128   # x,y resolution 
-Lx = Ly = Lz = 64.0  # x,y,z extent [m]
+nx = ny = nz = 128  # x,y resolution 
+Lx = Ly = Lz = 16.0  # x,y,z extent [m]
 
-surface_buoyancy_flux = -1e-9  # Buoyancy flux into ocean [m² s⁻³]
+surface_buoyancy_flux = -1e-10 # Buoyancy flux into ocean [m² s⁻³]
 initial_N = 1/500.0    # Initial buoyancy frequency [s⁻¹]
 initial_h = 10.0       # Initial mixed layer depth [m]
 
 # Physical parameters
 turb_vel_scale          = (-Lz*surface_buoyancy_flux)**(1/3)        # Domain turbulent velocity scale [m s⁻¹]
-noise_amplitude         = 0.01*turb_vel_scale                       # Noise amplitude [m s⁻¹]
+noise_amplitude         = 0.1*turb_vel_scale                        # Noise amplitude [m s⁻¹]
 
 surface_bz              = surface_buoyancy_flux/κ                   # [s⁻²]
 initial_dt              = 1e-2 / np.sqrt(-surface_bz)
@@ -87,7 +96,7 @@ CFL_cadence      = 10
 stats_cadence    = 100
 averages_cadence = 10
 analysis_cadence = 100
-run_time         = 2*hour
+run_time         = day
 max_writes       = 1000
 
 if debug:
@@ -131,10 +140,12 @@ logger.info("""\n
                     x-spacing : {:.2e} m 
                     y-spacing : {:.2e} m
            z-spacing min, max : {:.2e} m, {:.2e} m
+                      closure : {}
 
     """.format(surface_heat_flux, surface_buoyancy_flux, 1/initial_N, initial_dt, run_time, 
-               Lx, Ly, Lz, nx, ny, nz,
-               turb_vel_scale, erosion_time_scale, kolmogorov_length_scale, Δx, Δy, Δz_min, Δz_max)
+                Lx, Ly, Lz, nx, ny, nz,
+                turb_vel_scale, erosion_time_scale, kolmogorov_length_scale, Δx, Δy, Δz_min, Δz_max,
+                closure_name)
 )
 
 # Boundary conditions
