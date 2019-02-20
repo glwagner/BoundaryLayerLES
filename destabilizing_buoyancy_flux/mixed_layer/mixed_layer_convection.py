@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 # Setup
 debug = False
 
-ν_split = 0.0 #1e-1
-κ_split = 0.0 #1e-1
+ν_split = 0.0 #1e-4
+κ_split = 0.0 #1e-4
 
 if len(sys.argv) is 1:
     closure = None
@@ -72,11 +72,13 @@ def identifier(model, closure=None):
             model.nx, model.ny, model.nz, float_2_nice_str(-model.surface_buoyancy_flux), 1/np.sqrt(initial_N2), closure_name)
 
 # Main parameters
-nx = ny = nz = 128  # x,y resolution 
-Lx = Ly = Lz = 16.0  # x,y,z extent [m]
+nx = ny = 32    # x,y resolution 
+Lx = Ly = 8.0   # x,y extent [m]
+nz = 256
+Lz = 64.0
 
 surface_buoyancy_flux = -1e-10 # Buoyancy flux into ocean [m² s⁻³]
-initial_N = 1/500.0    # Initial buoyancy frequency [s⁻¹]
+initial_N = 1/200.0    # Initial buoyancy frequency [s⁻¹]
 initial_h = 10.0       # Initial mixed layer depth [m]
 
 # Physical parameters
@@ -84,7 +86,7 @@ turb_vel_scale          = (-Lz*surface_buoyancy_flux)**(1/3)        # Domain tur
 noise_amplitude         = 0.1*turb_vel_scale                        # Noise amplitude [m s⁻¹]
 
 surface_bz              = surface_buoyancy_flux/κ                   # [s⁻²]
-initial_dt              = 1e-2 / np.sqrt(-surface_bz)
+initial_dt              = 1e-4 / np.sqrt(-surface_bz)
 
 surface_heat_flux       = surface_buoyancy_flux*ρ0*cP/(α*g)         # [W m⁻²]
 kolmogorov_length_scale = (-ν**3/surface_buoyancy_flux)**(1/4)      # Kolmogorov length scale
@@ -92,16 +94,17 @@ initial_N2              = initial_N**2                              # Initial bu
 erosion_time_scale      = -initial_N2*Lz**2/surface_buoyancy_flux   # Time-scale for stratification erosion
 
 # Numerical parameters
-CFL_cadence      = 10
+dt_cadence      = 100
+dt_safety       = 0.01
 stats_cadence    = 100
 averages_cadence = 10
 analysis_cadence = 100
 run_time         = day
-max_writes       = 1000
+max_writes       = 100
 
 if debug:
     nx = ny = nz = 8
-    CFL_cadence = np.inf
+    dt_cadence = np.inf
     initial_dt = 1e-16
     run_time = 10*initial_dt
     stats_cadence = analysis_cadence = averages_cadence = 1
@@ -113,6 +116,7 @@ model = dedaLES.BoussinesqChannelFlow(Lx=Lx, Ly=Ly, Lz=Lz, nx=nx, ny=ny, nz=nz, 
 Δx = Lx/nx
 Δy = Ly/ny
 Δz_min, Δz_max = dedaLES.grid_stats(model, 2)
+Δmin = min(Δx, Δy, Δz_min)
 
 logger.info("""\n
     *** Convection into a linearly stratified fluid ***
@@ -167,13 +171,17 @@ model.set_fields(
 
 model.stop_at(sim_time=run_time)
 
-CFL = flow_tools.CFL(model.solver, initial_dt=initial_dt, cadence=CFL_cadence, max_change=1.5, safety=0.5)
-CFL.add_velocities(('u', 'v', 'w'))
+dt_gizmo = dedaLES.TimeStepGizmo(model.solver, initial_dt=initial_dt, cadence=dt_cadence, max_change=1.5, safety=dt_safety)
+dt_gizmo.add_velocities(('u', 'v', 'w'))
+dt_gizmo.add_diffusivity('ν_sgs')
+dt_gizmo.add_diffusivity('κb_sgs')
 
 stats = flow_tools.GlobalFlowProperty(model.solver, cadence=stats_cadence)
 
 stats.add_property("w*b", name="wb")
 stats.add_property("ε + ε_sgs", name="epsilon")
+stats.add_property("ν_sgs", name="eddy viscosity")
+stats.add_property("κb_sgs", name="eddy diffusivity")
 stats.add_property("χ + χ_sgs", name="chi")
 stats.add_property("w*w", name="w_sq")
 stats.add_property("sqrt(u*u + v*v + w*w) / ν", name='Re')
@@ -200,17 +208,18 @@ try:
     log_time = time.time()  
 
     while model.solver.ok:
-        dt = CFL.compute_dt()
+        dt = dt_gizmo.compute_dt()
         model.solver.step(dt)
         if model.time_to_log(stats_cadence): 
             compute_time = time.time() - log_time
             log_time = time.time()
 
-            logger.info("""i: {:d}, t: {:.3f} hr, twall: {:.1f} s, dt: {:.2f} s, max Re {:.0f} 
-    max sqrt(w^2): {:.2e}, max ε: {:.2e}, <ε>: {:.2e}, <wb>: {:.2e}, <χ>: {:.2e}""".format( 
-        model.solver.iteration, model.solver.sim_time/hour, compute_time, dt, stats.max("Re"),
-        np.sqrt(stats.max("w_sq")), stats.max("epsilon"), stats.volume_average("epsilon"),
-        stats.volume_average("wb"), stats.volume_average("chi")
+            dt_sgs = Δmin**2 / stats.max("eddy viscosity")
+            logger.info("""i: {:d}, t: {:.3f} hr ({:.1f} %), twall: {:.1f} s, dt: {:.2e} s, max Re {:.0f} 
+    max sqrt(w^2): {:.2e}, max ε: {:.2e}, <ε>: {:.2e}, <wb>: {:.2e}, <χ>: {:.2e}, max ν_sgs: {:.2e}, dt_sgs: {:.2e}""".format( 
+                model.solver.iteration, model.solver.sim_time/hour, 0.01*model.solver.sim_time/run_time, compute_time, dt, stats.max("Re"),
+                np.sqrt(stats.max("w_sq")), stats.max("epsilon"), stats.volume_average("epsilon"),
+                stats.volume_average("wb"), stats.volume_average("chi"), stats.max("eddy viscosity"), dt_sgs
             ))
 
 except:

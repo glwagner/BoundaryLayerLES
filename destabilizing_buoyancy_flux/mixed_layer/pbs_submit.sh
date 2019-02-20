@@ -49,7 +49,7 @@ cp $runscript $TMPDIR/
 cd $TMPDIR
 
 ### Run the executable
-mpiexec python3 $runscript >> $PWD/$outputname" >> $scriptname
+mpiexec python3 $runscript $closure >> $PWD/$outputname" >> $scriptname
 
 echo "Output in $outputname"
 qsub $scriptname
