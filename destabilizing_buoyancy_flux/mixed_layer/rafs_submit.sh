@@ -13,15 +13,20 @@ else
     nodes=$1
 fi
 
-jobname="ts$nodes"
+if [ $2 -eq 0 ]; then
+    case=1
+else
+    case=$2
+fi
+
+walltime="01:00:00"
+runscript="mixed_layer_convection.py"
+closure="ConstantSmagorinsky"
+
+jobname="E$case"
+outputname="$jobname.$closure.out"
 slurmoutput="$jobname.%j.out"
 scriptname="$jobname.slurm"
-walltime="4:00:00"
-runscript="mixed_layer_convection.py"
-
-#closure="ConstantSmagorinsky"
-closure="AnisotropicMinimumDissipation"
-outputname="$jobname.$closure.out"
 
 rm -f $scriptname
 
@@ -45,7 +50,7 @@ export DEDALES='/nobackup1/glwagner/dedaLES'
 conda activate dedalus
 
 # Content
-mpiexec python3 $runscript $closure >> $outputname" >> $scriptname
+mpiexec python3 $runscript $closure $case >> $outputname" >> $scriptname
 
 sbatch $scriptname
 squeue -p sched_mit_raffaele
