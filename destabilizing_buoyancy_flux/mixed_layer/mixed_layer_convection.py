@@ -12,33 +12,6 @@ import dedaLES
 logging.basicConfig(datefmt="%I:%M:%S")
 logger = logging.getLogger(__name__)
 
-# Setup
-debug = False
-
-ν_split = 0.0 #1e-4
-κ_split = 0.0 #1e-4
-
-if len(sys.argv) is 1:
-    closure = None
-    closure_name = 'DNS'
-else:
-    if len(sys.argv) is 2:
-        closure_name = sys.argv[1]
-    else:
-        closure_name = sys.argv[2]
-        debug = True
-    try:
-        if closure_name is 'DNS':
-            closure = None
-        #elif closure_name is 'ConstantSmagorinsky':
-        #    closure = getattr(dedaLES, closure_name)(ν_split=ν_split)
-        else:
-            closure = getattr(dedaLES, closure_name)() #ν_split=ν_split, κ_split=κ_split)
-    except:
-        logger.info("Closure '{}' not found! Running in debug mode.".format(closure_name))
-        closure = None
-        debug = True
-
 # Some convenient constants
 second = 1.0
 minute = 60*second
@@ -68,18 +41,58 @@ def float_2_nice_str(a):
 def identifier(model, closure=None): 
     if closure is None: closure_name = 'DNS'
     else:               closure_name = closure.__class__.__name__
-    return "nx{:d}_ny{:d}_nz{:d}_F{}_Ninv{:.0f}_{:s}".format(
-            model.nx, model.ny, model.nz, float_2_nice_str(-model.surface_buoyancy_flux), 1/np.sqrt(initial_N2), closure_name)
+    return "case{}_{:s}".format(model.case, closure_name)
+    #return "nx{:d}_ny{:d}_nz{:d}_F{}_Ninv{:.0f}_{:s}".format(
+    #        model.nx, model.ny, model.nz, float_2_nice_str(-model.surface_buoyancy_flux), 1/np.sqrt(initial_N2), closure_name)
+
+parameters = {
+    '1': {'nx': 32, 'nz':  64, 'Lx': 16.0, 'Lz': 32.0, 'Fb': -1e-10, 'N0': 1/200.0, 'ν_split':  0.0, 'κ_split':  0.0},  
+    '2': {'nx': 32, 'nz':  64, 'Lx': 16.0, 'Lz': 32.0, 'Fb': -1e-10, 'N0': 1/200.0, 'ν_split': 1e-4, 'κ_split': 1e-4},  
+    '3': {'nx': 32, 'nz':  64, 'Lx': 16.0, 'Lz': 32.0, 'Fb': -1e-10, 'N0': 1/200.0, 'ν_split': 1e-3, 'κ_split': 1e-3},  
+    '4': {'nx': 32, 'nz':  64, 'Lx': 16.0, 'Lz': 32.0, 'Fb': -1e-10, 'N0': 1/200.0, 'ν_split': 1e-2, 'κ_split': 1e-2},  
+    '5': {'nx': 32, 'nz':  64, 'Lx': 16.0, 'Lz': 32.0, 'Fb': -1e-10, 'N0': 1/200.0, 'ν_split': 1e-1, 'κ_split': 1e-1},  
+}
+
+if sys.argv[-1] == 'debug':
+    debug = True
+else:
+    debug = False
+
+try:
+    case = sys.argv[2]
+    params = parameters[case]
+except:
+    case = '1'
+    params = parameters[case]
+    logger.info("Case not found! Using case {}.".format(case))
 
 # Main parameters
-nx = ny = 32    # x,y resolution 
-Lx = Ly = 8.0   # x,y extent [m]
-nz = 256
-Lz = 64.0
+ν_split = params['ν_split']
+κ_split = params['κ_split']
 
-surface_buoyancy_flux = -1e-10 # Buoyancy flux into ocean [m² s⁻³]
-initial_N = 1/200.0    # Initial buoyancy frequency [s⁻¹]
-initial_h = 10.0       # Initial mixed layer depth [m]
+nx = ny = params['nx'] # x,y resolution 
+Lx = Ly = params['Lx'] # x,y extent [m]
+nz = params['nz']
+Lz = params['Lz']
+
+surface_buoyancy_flux = params['Fb']    # Buoyancy flux into ocean [m² s⁻³]
+initial_N = params['N0']                # Initial buoyancy frequency [s⁻¹]
+initial_h = 10.0                        # Initial mixed layer depth [m]
+
+try:
+    closure_name = sys.argv[1]
+    if closure_name is 'DNS':
+        closure = None
+    elif closure_name == 'ConstantSmagorinsky':
+        closure = getattr(dedaLES, closure_name)(ν_split=ν_split)
+        dt_safety = 1.0
+    else:
+        closure = getattr(dedaLES, closure_name)(ν_split=ν_split, κ_split=κ_split)
+        dt_safety = 5.0
+except:
+    closure_name = 'DNS'
+    closure = None
+    logger.info("Closure not found! Using {}.".format(closure_name))
 
 # Physical parameters
 turb_vel_scale          = (-Lz*surface_buoyancy_flux)**(1/3)        # Domain turbulent velocity scale [m s⁻¹]
@@ -94,8 +107,8 @@ initial_N2              = initial_N**2                              # Initial bu
 erosion_time_scale      = -initial_N2*Lz**2/surface_buoyancy_flux   # Time-scale for stratification erosion
 
 # Numerical parameters
-dt_cadence      = 100
-dt_safety       = 0.01
+dt_cadence       = 10
+#dt_safety        = params['dt_safety']
 stats_cadence    = 100
 averages_cadence = 10
 analysis_cadence = 100
@@ -110,7 +123,7 @@ if debug:
     stats_cadence = analysis_cadence = averages_cadence = 1
 
 # Construct model
-model = dedaLES.BoussinesqChannelFlow(Lx=Lx, Ly=Ly, Lz=Lz, nx=nx, ny=ny, nz=nz, ν=ν, κ=κ, closure=closure,
+model = dedaLES.BoussinesqChannelFlow(Lx=Lx, Ly=Ly, Lz=Lz, nx=nx, ny=ny, nz=nz, ν=ν, κ=κ, closure=closure, case=int(case),
                                       surface_buoyancy_flux=surface_buoyancy_flux, surface_bz=surface_bz, initial_N2=initial_N2)
 
 Δx = Lx/nx
@@ -215,11 +228,12 @@ try:
             log_time = time.time()
 
             dt_sgs = Δmin**2 / stats.max("eddy viscosity")
-            logger.info("""i: {:d}, t: {:.3f} hr ({:.1f} %), twall: {:.1f} s, dt: {:.2e} s, max Re {:.0f} 
-    max sqrt(w^2): {:.2e}, max ε: {:.2e}, <ε>: {:.2e}, <wb>: {:.2e}, <χ>: {:.2e}, max ν_sgs: {:.2e}, dt_sgs: {:.2e}""".format( 
+
+            logger.info("""i: {:d}, t: {:.3f} hr ({:.1f} %), twall: {:.1f} s, dt: {:.2e} s, max Re {:.0f}, max sqrt(w^2): {:.2e}, 
+    max ε: {:.2e}, <ε>: {:.2e}, <wb>: {:.2e}, <χ>: {:.2e}, max ν_sgs: {:.2e}, max κ_sgs: {:.2e}, dt_sgs: {:.2e}""".format( 
                 model.solver.iteration, model.solver.sim_time/hour, 0.01*model.solver.sim_time/run_time, compute_time, dt, stats.max("Re"),
                 np.sqrt(stats.max("w_sq")), stats.max("epsilon"), stats.volume_average("epsilon"),
-                stats.volume_average("wb"), stats.volume_average("chi"), stats.max("eddy viscosity"), dt_sgs
+                stats.volume_average("wb"), stats.volume_average("chi"), stats.max("eddy viscosity"), stats.max("eddy diffusivity"), dt_sgs
             ))
 
 except:
